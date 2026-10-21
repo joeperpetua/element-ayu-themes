@@ -21,12 +21,14 @@ function fontDir() {
 }
 
 const USAGE = `Usage: node install-font.mjs [--version <version>] [--all-styles] [--force] [--dry-run]
+       node install-font.mjs --uninstall [--dry-run]
 
 Options:
   --version <version>   Iosevka version to install. Default: the latest release.
   --all-styles          Install all styles. Default: the 8 styles that Element uses.
   --force               Replace font files that are already installed.
-  --dry-run             Download and unpack the font, then list the files. Install nothing.
+  --uninstall           Remove all Iosevka-*.ttf files from the font folder of the current user.
+  --dry-run             List the files to install or remove. Change nothing.
   -h, --help            Show this usage and exit.`;
 
 function fail(message) {
@@ -43,6 +45,7 @@ if (args.includes("-h") || args.includes("--help")) {
 let version;
 let allStyles = false;
 let force = false;
+let uninstall = false;
 let dryRun = false;
 for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -53,12 +56,15 @@ for (let i = 0; i < args.length; i++) {
         allStyles = true;
     } else if (arg === "--force") {
         force = true;
+    } else if (arg === "--uninstall") {
+        uninstall = true;
     } else if (arg === "--dry-run") {
         dryRun = true;
     } else {
         fail(`Unknown argument: ${arg}`);
     }
 }
+if (uninstall && (version || allStyles || force)) fail("Do not use --version, --all-styles or --force with --uninstall");
 
 const HEADERS = { "User-Agent": "element-ayu-themes", "Accept": "application/vnd.github+json" };
 
@@ -99,23 +105,80 @@ function register(file, target) {
     run("reg", ["add", WINDOWS_FONT_KEY, "/v", displayName, "/t", "REG_SZ", "/d", target, "/f"]);
 }
 
-function loadWindowsFonts(paths) {
-    const list = paths.map((path) => `'${path.replace(/'/g, "''")}'`).join(", ");
-    const script = `
-        Add-Type -Namespace Win32 -Name FontApi -MemberDefinition '
-            [DllImport("gdi32.dll", CharSet = CharSet.Unicode)] public static extern int AddFontResourceW(string file);
-            [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SendMessageTimeoutW(
-                IntPtr hWnd, uint msg, UIntPtr wParam, IntPtr lParam, uint flags, uint timeout, out UIntPtr result);'
-        $failed = 0
-        foreach ($font in @(${list})) { if ([Win32.FontApi]::AddFontResourceW($font) -eq 0) { $failed++ } }
+const WINDOWS_FONT_API = `
+    Add-Type -Namespace Win32 -Name FontApi -MemberDefinition '
+        [DllImport("gdi32.dll", CharSet = CharSet.Unicode)] public static extern int AddFontResourceW(string file);
+        [DllImport("gdi32.dll", CharSet = CharSet.Unicode)] public static extern int RemoveFontResourceW(string file);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SendMessageTimeoutW(
+            IntPtr hWnd, uint msg, UIntPtr wParam, IntPtr lParam, uint flags, uint timeout, out UIntPtr result);'
+    function Send-FontChange {
         $result = [UIntPtr]::Zero
         [void][Win32.FontApi]::SendMessageTimeoutW([IntPtr]0xffff, 0x1D, [UIntPtr]::Zero, [IntPtr]::Zero, 2, 1000, [ref]$result)
-        exit $failed`;
+    }`;
+
+const powershellList = (items) => items.map((item) => `'${item.replace(/'/g, "''")}'`).join(", ");
+
+function powershell(script) {
+    const encoded = Buffer.from(`${WINDOWS_FONT_API}\n${script}`, "utf16le").toString("base64");
+    run("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded]);
+}
+
+function loadWindowsFonts(paths) {
     try {
-        run("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")]);
+        powershell(`
+            $failed = 0
+            foreach ($font in @(${powershellList(paths)})) { if ([Win32.FontApi]::AddFontResourceW($font) -eq 0) { $failed++ } }
+            Send-FontChange
+            exit $failed`);
     } catch {
         console.warn("Windows could not load some fonts into this session. Sign out and sign in again to use them.");
     }
+}
+
+function unloadWindowsFonts(paths) {
+    powershell(`
+        $paths = @(${powershellList(paths)})
+        $names = $paths | ForEach-Object { [IO.Path]::GetFileName($_) }
+        $key = '${WINDOWS_FONT_KEY.replace("HKCU\\", "HKCU:\\")}'
+        $fonts = Get-Item -Path $key
+        foreach ($value in $fonts.Property) {
+            if ($names -contains [IO.Path]::GetFileName([string]$fonts.GetValue($value))) {
+                Remove-ItemProperty -Path $key -Name $value
+            }
+        }
+        foreach ($path in $paths) {
+            for ($i = 0; $i -lt 20 -and [Win32.FontApi]::RemoveFontResourceW($path) -ne 0; $i++) { }
+        }
+        Send-FontChange`);
+}
+
+function remove(files) {
+    if (process.platform === "win32") {
+        try {
+            unloadWindowsFonts(files);
+        } catch {
+            console.warn(`Could not remove all registry entries in ${WINDOWS_FONT_KEY}.`);
+        }
+    }
+    const result = { removed: 0, failed: 0 };
+    for (const file of files) {
+        try {
+            rmSync(file);
+            result.removed++;
+        } catch (error) {
+            console.warn(`Could not delete ${basename(file)}: ${error.code ?? error.message}. Close the apps that use it.`);
+            result.failed++;
+        }
+    }
+    if (process.platform === "linux") {
+        if (existsSync(fontDir()) && readdirSync(fontDir()).length === 0) rmSync(fontDir(), { recursive: true });
+        try {
+            run("fc-cache", ["-f"]);
+        } catch {
+            console.warn("Could not run fc-cache. Run 'fc-cache -f' to update the font cache.");
+        }
+    }
+    return result;
 }
 
 function install(fonts) {
@@ -153,7 +216,35 @@ function install(fonts) {
     return result;
 }
 
-async function main() {
+function uninstallFonts() {
+    const dir = fontDir();
+    const files = existsSync(dir)
+        ? readdirSync(dir)
+              .filter((file) => /^Iosevka-.*\.ttf$/i.test(file))
+              .sort()
+              .map((file) => join(dir, file))
+        : [];
+    if (files.length === 0) {
+        console.log(`Iosevka is not installed in ${dir}.`);
+        return;
+    }
+
+    if (dryRun) {
+        console.log(`Dry run. The script would remove ${files.length} font files from ${dir}:`);
+        for (const file of files) console.log(`  ${basename(file)}`);
+        return;
+    }
+
+    const { removed, failed } = remove(files);
+    console.log(`Removed ${removed} font files from ${dir}.`);
+    if (failed > 0) {
+        console.log("Run the script again after you close the apps that use the fonts.");
+        process.exitCode = 1;
+    }
+    console.log("Restart Element to stop using Iosevka.");
+}
+
+async function installFonts() {
     const release = await getRelease();
     const releaseVersion = release.tag_name.replace(/^v/, "");
     const assetName = `PkgTTF-Iosevka-${releaseVersion}.zip`;
@@ -200,7 +291,11 @@ async function main() {
 }
 
 try {
-    await main();
+    if (uninstall) {
+        uninstallFonts();
+    } else {
+        await installFonts();
+    }
 } catch (error) {
     console.error(error.message);
     process.exitCode = 1;

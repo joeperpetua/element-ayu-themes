@@ -35,6 +35,7 @@
 		"apply": "node install-theme.mjs",
 		"apply:all": "node install-theme.mjs --all themes",
 		"font:install": "node install-font.mjs",
+		"font:uninstall": "node install-font.mjs --uninstall",
 		"gen:all": "npm run gen:light-unbordered && npm run gen:light && npm run gen:dark && npm run gen:dark-unbordered && npm run gen:mirage && npm run gen:mirage-unbordered"
 	}
 }
