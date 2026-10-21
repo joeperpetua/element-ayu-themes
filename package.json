@@ -1,0 +1,40 @@
+{
+	"name": "element-ayu-themes",
+	"displayName": "Element Ayu",
+	"description": "Ayu themes for Element Matrix client. Generated from vscode-ayu",
+	"version": "1.5.0",
+	"publisher": "teabyii",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/joeperpetua/element-ayu-themes"
+	},
+	"engines": {
+		"node": ">=18"
+	},
+	"categories": [
+		"Themes"
+	],
+	"keywords": [
+		"icon-theme",
+		"theme",
+		"ayu",
+		"element",
+		"element-desktop",
+		"element-web",
+		"matrix"
+	],
+	"homepage": "https://github.com/joeperpetua/element-ayu-themes",
+	"scripts": {
+		"gen:light-unbordered": "node gen-theme.mjs https://raw.githubusercontent.com/ayu-theme/vscode-ayu/refs/heads/master/ayu-light-unbordered.json themes/ayu-light-unbordered.theme.json",
+		"gen:light": "node gen-theme.mjs https://raw.githubusercontent.com/ayu-theme/vscode-ayu/refs/heads/master/ayu-light.json themes/ayu-light.theme.json",
+		"gen:dark": "node gen-theme.mjs https://raw.githubusercontent.com/ayu-theme/vscode-ayu/refs/heads/master/ayu-dark.json themes/ayu-dark.theme.json",
+		"gen:dark-unbordered": "node gen-theme.mjs https://raw.githubusercontent.com/ayu-theme/vscode-ayu/refs/heads/master/ayu-dark-unbordered.json themes/ayu-dark-unbordered.theme.json",
+		"gen:mirage": "node gen-theme.mjs https://raw.githubusercontent.com/ayu-theme/vscode-ayu/refs/heads/master/ayu-mirage.json themes/ayu-mirage.theme.json",
+		"gen:mirage-unbordered": "node gen-theme.mjs https://raw.githubusercontent.com/ayu-theme/vscode-ayu/refs/heads/master/ayu-mirage-unbordered.json themes/ayu-mirage-unbordered.theme.json",
+		"apply": "node install-theme.mjs",
+		"apply:all": "node install-theme.mjs --all themes",
+		"font:install": "node install-font.mjs",
+		"gen:all": "npm run gen:light-unbordered && npm run gen:light && npm run gen:dark && npm run gen:dark-unbordered && npm run gen:mirage && npm run gen:mirage-unbordered"
+	}
+}
